@@ -11,7 +11,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "lint": "tsc -p tsconfig.json --noEmit",
-    "start": "node dist/harness.js",
+    "start": "node dist/src/harness.js",
     "test": "npm run build && node --test \"dist/test/*.test.js\""
   },
   "repository": {
