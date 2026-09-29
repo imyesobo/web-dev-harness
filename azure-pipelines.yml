@@ -1,0 +1,38 @@
+trigger: none
+
+pr: none
+
+pool:
+  vmImage: ubuntu-latest
+
+variables:
+  NODE_VERSION: '24.x'
+
+steps:
+  - task: NodeTool@0
+    inputs:
+      versionSpec: $(NODE_VERSION)
+    displayName: Use Node.js
+
+  - script: npm ci
+    displayName: Install harness
+
+  - script: npm test
+    displayName: Build and test harness
+
+  - script: node dist/src/harness.js
+    displayName: Run deterministic web component harness
+    env:
+      SYSTEM_ACCESSTOKEN: $(System.AccessToken)
+      FIGMA_TOKEN: $(FIGMA_TOKEN)
+      ADO_ORGANIZATION: $(System.CollectionUri)
+      ADO_PROJECT: $(System.TeamProject)
+      ADO_WORK_ITEM_ID: $(ADO_WORK_ITEM_ID)
+      ADO_REPOSITORY: $(Build.Repository.Name)
+      ADO_SOURCE_BRANCH: $(Build.SourceBranch)
+      ADO_TARGET_BRANCH: $(ADO_TARGET_BRANCH)
+      ADO_PIPELINE_ID: $(System.DefinitionId)
+      FIGMA_FILE_KEY: $(FIGMA_FILE_KEY)
+      FIGMA_NODE_IDS: $(FIGMA_NODE_IDS)
+      OPENAPI_PATH: $(OPENAPI_PATH)
+      TEST_RESULT_FILES: $(TEST_RESULT_FILES)
