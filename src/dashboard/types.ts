@@ -1,6 +1,12 @@
 import type { HarnessConfig, HarnessState, StageName } from '../types.js';
 
-export type SessionStatus = 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
+export type SessionStatus =
+  | 'queued'
+  | 'running'
+  | 'cancelling'
+  | 'completed'
+  | 'failed'
+  | 'cancelled';
 
 export interface SessionConfigInput {
   workspace: string;

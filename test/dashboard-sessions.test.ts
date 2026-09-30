@@ -42,8 +42,31 @@ test('session manager cancels an active workflow', async () => {
     options?.signal?.throwIfAborted();
   });
   const session = manager.start(input);
+  await new Promise(resolve => setTimeout(resolve, 0));
   const cancelled = manager.cancel(session.id);
   await new Promise(resolve => setTimeout(resolve, 0));
-  assert.equal(cancelled?.status, 'cancelled');
+  assert.equal(cancelled?.status, 'cancelling');
   assert.equal(manager.get(session.id)?.status, 'cancelled');
+});
+
+test('session manager serializes workflows sharing a workspace', async () => {
+  const releases: Array<() => void> = [];
+  let active = 0;
+  let maximumActive = 0;
+  const manager = new SessionManager(async () => {
+    active += 1;
+    maximumActive = Math.max(maximumActive, active);
+    await new Promise<void>(resolve => releases.push(resolve));
+    active -= 1;
+  });
+  const first = manager.start(input);
+  const second = manager.start({ ...input, workItemId: 43 });
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(manager.get(first.id)?.status, 'running');
+  assert.equal(manager.get(second.id)?.status, 'queued');
+  releases.shift()?.();
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(manager.get(second.id)?.status, 'running');
+  assert.equal(maximumActive, 1);
+  releases.shift()?.();
 });

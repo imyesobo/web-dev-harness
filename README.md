@@ -39,6 +39,34 @@ npm ci
 npm test
 ```
 
+## Open-WC dashboard
+
+The harness includes a responsive Lit web component interface built from Lion
+primitives. It controls multiple concurrent workflow sessions while the
+deterministic Node.js orchestrator retains ownership of stage progression.
+
+```sh
+npm run dashboard
+```
+
+Open `http://127.0.0.1:4173`. Set `HARNESS_UI_PORT` to select another local
+port. The dashboard lets you:
+
+- configure every work-item, Azure DevOps, Figma, OpenAPI, model, result, branch,
+  pipeline, and publish option;
+- start isolated sessions with state under
+  `<workspace>/.harness/sessions/<session-id>/state.json`;
+- monitor all sessions started by the running dashboard, their current stage,
+  completed checkpoints, and verification attempt;
+- cancel active work. Cancellation terminates active verification child
+  processes and otherwise takes effect at the next deterministic stage boundary.
+
+The server binds only to loopback, applies a restrictive Content Security Policy,
+limits API request bodies, and rejects cross-origin API requests. Figma tokens
+are retained only in server memory for the session and are never returned by the
+API. Azure credentials still come from `SYSTEM_ACCESSTOKEN` or
+`AZURE_DEVOPS_EXT_PAT` in the server environment.
+
 ## Configuration
 
 | Variable | Purpose |

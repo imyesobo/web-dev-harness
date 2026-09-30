@@ -38,7 +38,7 @@ export class HarnessDashboard extends LitElement {
     .status { padding: .2rem .55rem; border-radius: 1rem; font-size: .8rem; font-weight: 700; background: #e8edf5; }
     .status-running { color: #0759a5; background: #dceeff; }
     .status-completed { color: #146c2e; background: #dcf7e4; }
-    .status-failed, .status-cancelled { color: #a02020; background: #ffe1e1; }
+    .status-failed, .status-cancelled, .status-cancelling { color: #a02020; background: #ffe1e1; }
     ol { display: grid; grid-template-columns: repeat(5, 1fr); gap: .35rem; padding: 0; list-style: none; }
     li { padding: .4rem; border-radius: .3rem; text-align: center; font-size: .75rem; background: #edf1f6; }
     li.done { color: white; background: #287a3f; }

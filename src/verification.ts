@@ -26,7 +26,14 @@ export async function verify(options: VerificationOptions): Promise<number> {
     let failure: CommandResult | undefined;
     for (const [executable, args] of verificationCommands) {
       options.signal?.throwIfAborted();
-      const result = await runner(executable, args, options.workspace);
+      const result = await runner(
+        executable,
+        args,
+        options.workspace,
+        process.env,
+        options.signal,
+      );
+      options.signal?.throwIfAborted();
       if (result.exitCode !== 0) {
         failure = result;
         break;

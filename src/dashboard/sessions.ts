@@ -14,6 +14,7 @@ interface InternalSession extends SessionRecord {
 
 export class SessionManager {
   readonly #sessions = new Map<string, InternalSession>();
+  readonly #workspaceTails = new Map<string, Promise<void>>();
 
   constructor(readonly runner: HarnessRunner = runHarness) {}
 
@@ -41,7 +42,14 @@ export class SessionManager {
       controller,
     };
     this.#sessions.set(id, session);
-    void this.#run(session);
+    const previous = this.#workspaceTails.get(secretConfig.workspace) ?? Promise.resolve();
+    const execution = previous.then(() => this.#run(session));
+    this.#workspaceTails.set(secretConfig.workspace, execution);
+    void execution.finally(() => {
+      if (this.#workspaceTails.get(secretConfig.workspace) === execution) {
+        this.#workspaceTails.delete(secretConfig.workspace);
+      }
+    });
     return publicRecord(session);
   }
 
@@ -49,12 +57,17 @@ export class SessionManager {
     const session = this.#sessions.get(id);
     if (!session || terminal(session.status)) return session && publicRecord(session);
     session.controller.abort();
-    session.status = 'cancelled';
-    session.endedAt = new Date().toISOString();
+    if (session.status === 'queued') {
+      session.status = 'cancelled';
+      session.endedAt = new Date().toISOString();
+    } else {
+      session.status = 'cancelling';
+    }
     return publicRecord(session);
   }
 
   async #run(session: InternalSession): Promise<void> {
+    if (session.controller.signal.aborted) return;
     session.status = 'running';
     try {
       await this.runner(session.secretConfig, {

@@ -105,12 +105,14 @@ export async function runHarness(
         pipelineTriggered: false,
       };
       if (!state.publication.testsPublished) {
+        options.signal?.throwIfAborted();
         const testRunId = await azure.publishTestResults(config.workItemId, config.resultFiles);
         state.publication.testsPublished = true;
         if (testRunId !== undefined) state.publication.testRunId = testRunId;
         await saveState(config.stateFile, state);
       }
       if (!state.publication.pullRequestCreated) {
+        options.signal?.throwIfAborted();
         await azure.ensurePullRequest(
           config.adoRepository,
           config.sourceBranch,
@@ -121,6 +123,7 @@ export async function runHarness(
         await saveState(config.stateFile, state);
       }
       if (!state.publication.pipelineTriggered) {
+        options.signal?.throwIfAborted();
         await azure.runPipeline(config.pipelineId, config.sourceBranch);
         state.publication.pipelineTriggered = true;
         await saveState(config.stateFile, state);
