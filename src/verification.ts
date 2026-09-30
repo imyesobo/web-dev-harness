@@ -14,15 +14,18 @@ export interface VerificationOptions {
   runner?: typeof runCommand;
   onFailure: (errorContext: string, attempt: number) => Promise<void>;
   onAttempt?: (attempt: number) => Promise<void>;
+  signal?: AbortSignal;
 }
 
 export async function verify(options: VerificationOptions): Promise<number> {
   const maxAttempts = options.maxAttempts ?? 3;
   const runner = options.runner ?? runCommand;
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    options.signal?.throwIfAborted();
     await options.onAttempt?.(attempt);
     let failure: CommandResult | undefined;
     for (const [executable, args] of verificationCommands) {
+      options.signal?.throwIfAborted();
       const result = await runner(executable, args, options.workspace);
       if (result.exitCode !== 0) {
         failure = result;

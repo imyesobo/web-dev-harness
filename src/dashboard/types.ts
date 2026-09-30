@@ -1,0 +1,33 @@
+import type { HarnessConfig, HarnessState, StageName } from '../types.js';
+
+export type SessionStatus = 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
+
+export interface SessionConfigInput {
+  workspace: string;
+  workItemId: number;
+  adoOrganization: string;
+  adoProject: string;
+  adoRepository: string;
+  sourceBranch?: string;
+  targetBranch?: string;
+  pipelineId?: number;
+  figmaFileKey: string;
+  figmaNodeIds?: string[];
+  figmaToken: string;
+  openApiPath: string;
+  copilotModel?: string;
+  resultFiles?: string[];
+  skipPublish?: boolean;
+}
+
+export interface SessionRecord {
+  id: string;
+  status: SessionStatus;
+  currentStage?: StageName;
+  attempt?: number;
+  startedAt: string;
+  endedAt?: string;
+  error?: string;
+  config: Omit<HarnessConfig, 'figmaToken'> & { figmaTokenConfigured: boolean };
+  state?: HarnessState;
+}

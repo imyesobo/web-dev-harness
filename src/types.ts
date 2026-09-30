@@ -58,3 +58,14 @@ export interface TestResult {
   durationMs?: number;
   errorMessage?: string;
 }
+
+export interface HarnessEvent {
+  stage: StageName;
+  status: 'started' | 'completed';
+  attempt?: number;
+}
+
+export interface HarnessRunOptions {
+  signal?: AbortSignal;
+  onEvent?: (event: HarnessEvent) => void | Promise<void>;
+}
