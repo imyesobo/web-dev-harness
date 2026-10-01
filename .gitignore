@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.harness/
+playwright-report/
+test-results/
+storybook-static/
+*.log
+.env

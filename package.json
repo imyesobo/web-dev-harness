@@ -1,0 +1,36 @@
+{
+  "name": "web-dev-harness",
+  "version": "1.0.0",
+  "description": "Harness for agentic web development",
+  "private": true,
+  "type": "module",
+  "main": "dist/src/harness.js",
+  "bin": {
+    "web-dev-harness": "dist/src/harness.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json && node scripts/build-ui.mjs",
+    "dashboard": "npm run build && node dist/src/server.js",
+    "lint": "tsc -p tsconfig.json --noEmit",
+    "start": "node dist/src/harness.js",
+    "test": "npm run build && node --test \"dist/test/*.test.js\""
+  },
+  "repository": {
+    "type": "git",
+    "url": "http://localhost:26831/imyesobo/web-dev-harness"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@github/copilot-sdk": "1.0.15",
+    "@lion/ui": "0.21.1",
+    "lit": "3.3.3",
+    "yaml": "2.9.1"
+  },
+  "devDependencies": {
+    "@types/node": "26.6.3",
+    "esbuild": "0.28.2",
+    "typescript": "7.0.2"
+  }
+}
