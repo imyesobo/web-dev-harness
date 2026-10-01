@@ -1,18 +1,14 @@
 #!/usr/bin/env node
 import { pathToFileURL } from 'node:url';
+import { loadPromptSet } from './agents.js';
 import { AzureClient } from './cli/azure.js';
 import { FigmaClient } from './cli/figma.js';
 import { loadConfig } from './config.js';
 import { CopilotAgent } from './copilot.js';
 import { loadOpenApi } from './openapi.js';
-import {
-  developerPrompt,
-  playwrightPrompt,
-  specifierPrompt,
-  storybookPrompt,
-} from './prompts/index.js';
 import { completeStage, loadState, saveState } from './state.js';
 import type {
+  AzureService,
   HarnessConfig,
   HarnessRunOptions,
   HarnessState,
@@ -26,7 +22,7 @@ export async function runHarness(
   options: HarnessRunOptions = {},
 ): Promise<void> {
   const state = await loadState(config.stateFile, config.workItemId);
-  const azure = new AzureClient({
+  const azure = options.services?.azure ?? new AzureClient({
     organization: config.adoOrganization,
     project: config.adoProject,
     workspace: config.workspace,
@@ -37,7 +33,7 @@ export async function runHarness(
 
   if (!done(state, 'ingest')) {
     await stageStarted(options, 'ingest');
-    state.context = await ingest(config, azure);
+    state.context = await ingest(config, azure, options);
     await checkpoint(config, state, 'ingest', options);
   }
   if (!state.context) throw new Error('Ingestion state is missing');
@@ -45,22 +41,33 @@ export async function runHarness(
   const needsAgent = !done(state, 'specification')
     || !done(state, 'implementation')
     || !done(state, 'verification');
-  const agent = new CopilotAgent(config.workspace, config.copilotModel);
+  let currentStage: StageName | undefined;
+  const agent = new CopilotAgent(config.workspace, config.copilotModel, (role, content) => {
+    options.onTranscript?.({
+      at: new Date().toISOString(),
+      ...(currentStage ? { stage: currentStage } : {}),
+      role,
+      content,
+    });
+  });
+  const prompts = await loadPromptSet();
   if (needsAgent) {
     options.signal?.throwIfAborted();
-    await agent.start([developerPrompt, storybookPrompt, playwrightPrompt].join('\n'));
+    await agent.start(prompts.system);
   }
   try {
     if (!done(state, 'specification')) {
+      currentStage = 'specification';
       await stageStarted(options, 'specification');
       state.specification = await agent.prompt(
-        `${specifierPrompt}\n\nContext:\n${JSON.stringify(state.context, null, 2)}`,
+        `${prompts.specifier}\n\nContext:\n${JSON.stringify(state.context, null, 2)}`,
       );
       await checkpoint(config, state, 'specification', options);
     }
     if (!state.specification) throw new Error('Specification state is missing');
 
     if (!done(state, 'implementation')) {
+      currentStage = 'implementation';
       await stageStarted(options, 'implementation');
       await agent.prompt([
         'Implement this approved specification now. You may edit files only in the workspace.',
@@ -71,10 +78,14 @@ export async function runHarness(
     }
 
     if (!done(state, 'verification')) {
+      currentStage = 'verification';
       await stageStarted(options, 'verification');
       await verify({
         workspace: config.workspace,
         maxAttempts: 3,
+        ...(options.services?.verificationRunner
+          ? { runner: options.services.verificationRunner }
+          : {}),
         ...(options.signal ? { signal: options.signal } : {}),
         onAttempt: async attempt => {
           state.attempts = attempt;
@@ -133,12 +144,17 @@ export async function runHarness(
   }
 }
 
-async function ingest(config: HarnessConfig, azure: AzureClient): Promise<IngestedContext> {
-  const figma = new FigmaClient({ token: config.figmaToken });
+async function ingest(
+  config: HarnessConfig,
+  azure: AzureService,
+  options: HarnessRunOptions,
+): Promise<IngestedContext> {
+  const figma = options.services?.figma ?? new FigmaClient({ token: config.figmaToken });
+  const loadApi = options.services?.loadOpenApi ?? loadOpenApi;
   const [workItem, design, openApi] = await Promise.all([
     azure.getWorkItem(config.workItemId),
     figma.getDesign(config.figmaFileKey, config.figmaNodeIds),
-    loadOpenApi(config.openApiPath),
+    loadApi(config.openApiPath),
   ]);
   return { workItem, figma: design, openApi };
 }

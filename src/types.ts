@@ -65,7 +65,48 @@ export interface HarnessEvent {
   attempt?: number;
 }
 
+export interface TranscriptEntry {
+  at: string;
+  stage?: StageName;
+  role: 'user' | 'assistant' | 'reasoning' | 'tool';
+  content: string;
+}
+
+export interface AzureService {
+  getWorkItem(id: number): Promise<unknown>;
+  ensurePullRequest(
+    repository: string,
+    sourceBranch: string,
+    targetBranch: string,
+    workItemId: number,
+  ): Promise<unknown>;
+  runPipeline(pipelineId: number, branch: string): Promise<unknown>;
+  publishTestResults(workItemId: number, resultFiles: readonly string[]): Promise<number | undefined>;
+}
+
+export interface FigmaService {
+  getDesign(fileKey: string, nodeIds?: readonly string[]): Promise<unknown>;
+}
+
+export type CommandRunner = (
+  executable: string,
+  args: readonly string[],
+  cwd: string,
+  env?: NodeJS.ProcessEnv,
+  signal?: AbortSignal,
+) => Promise<CommandResult>;
+
+/** Overrides for external integrations; used by demo mode and tests. */
+export interface HarnessServices {
+  azure?: AzureService;
+  figma?: FigmaService;
+  loadOpenApi?: (file: string) => Promise<unknown>;
+  verificationRunner?: CommandRunner;
+}
+
 export interface HarnessRunOptions {
   signal?: AbortSignal;
   onEvent?: (event: HarnessEvent) => void | Promise<void>;
+  onTranscript?: (entry: TranscriptEntry) => void;
+  services?: HarnessServices;
 }

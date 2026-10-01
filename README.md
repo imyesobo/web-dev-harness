@@ -18,6 +18,11 @@ State is atomically checkpointed in `.harness/state.json`, making interrupted
 runs resumable. The Copilot session exposes only built-in workspace file tools;
 MCP, shell, URL, custom, and out-of-workspace access are denied in code.
 
+See [docs/architecture.md](docs/architecture.md) for the architecture, the
+programmatic/agentic layer boundary, and workflow diagrams. Stage prompts are
+authored as Markdown agent and skill files in [agents/](agents/) — see
+[docs/authoring-agents.md](docs/authoring-agents.md) to customize them.
+
 ## Prerequisites
 
 - Node.js `^20.19.0` or `>=22.12.0`
@@ -66,6 +71,21 @@ limits API request bodies, and rejects cross-origin API requests. Figma tokens
 are retained only in server memory for the session and are never returned by the
 API. Azure credentials still come from `SYSTEM_ACCESSTOKEN` or
 `AZURE_DEVOPS_EXT_PAT` in the server environment.
+
+### Demo mode
+
+Click **Run demo (mocked integrations)** in the dashboard (or `POST /api/demo`)
+to run the complete five-stage workflow without any external accounts. The demo:
+
+- creates a throwaway workspace under the system temp directory, seeded with a
+  demo `openapi.yaml` (Customer Feedback API) and `package.json`;
+- mocks Azure DevOps (work item, pull request, pipeline, test publishing),
+  Figma (a compact feedback-form design), and the verification commands;
+- runs the specification and implementation stages against the **real** Copilot
+  connection, using the same credentials as your local Copilot CLI.
+
+The session appears in the dashboard like any other; the temporary workspace
+path is shown when the demo starts so you can inspect the files Copilot writes.
 
 ## Configuration
 

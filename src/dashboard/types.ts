@@ -1,4 +1,4 @@
-import type { HarnessConfig, HarnessState, StageName } from '../types.js';
+import type { HarnessConfig, HarnessState, StageName, TranscriptEntry } from '../types.js';
 
 export type SessionStatus =
   | 'queued'
@@ -36,4 +36,6 @@ export interface SessionRecord {
   error?: string;
   config: Omit<HarnessConfig, 'figmaToken'> & { figmaTokenConfigured: boolean };
   state?: HarnessState;
+  /** Only present on the session detail endpoint, not the list. */
+  transcript?: TranscriptEntry[];
 }

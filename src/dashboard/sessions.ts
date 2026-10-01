@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { loadState } from '../state.js';
-import type { HarnessConfig, HarnessRunOptions } from '../types.js';
+import type { HarnessConfig, HarnessRunOptions, HarnessServices, TranscriptEntry } from '../types.js';
 import { runHarness } from '../harness.js';
 import { createSessionConfig } from './config.js';
 import type { SessionConfigInput, SessionRecord, SessionStatus } from './types.js';
@@ -10,6 +10,8 @@ type HarnessRunner = (config: HarnessConfig, options?: HarnessRunOptions) => Pro
 interface InternalSession extends SessionRecord {
   secretConfig: HarnessConfig;
   controller: AbortController;
+  services?: HarnessServices;
+  log: TranscriptEntry[];
 }
 
 export class SessionManager {
@@ -26,10 +28,10 @@ export class SessionManager {
 
   get(id: string): SessionRecord | undefined {
     const session = this.#sessions.get(id);
-    return session ? publicRecord(session) : undefined;
+    return session ? publicRecord(session, true) : undefined;
   }
 
-  start(input: SessionConfigInput): SessionRecord {
+  start(input: SessionConfigInput, services?: HarnessServices): SessionRecord {
     const id = randomUUID();
     const secretConfig = createSessionConfig(input, id);
     const controller = new AbortController();
@@ -40,6 +42,8 @@ export class SessionManager {
       config: redactConfig(secretConfig),
       secretConfig,
       controller,
+      log: [],
+      ...(services ? { services } : {}),
     };
     this.#sessions.set(id, session);
     const previous = this.#workspaceTails.get(secretConfig.workspace) ?? Promise.resolve();
@@ -72,6 +76,13 @@ export class SessionManager {
     try {
       await this.runner(session.secretConfig, {
         signal: session.controller.signal,
+        ...(session.services ? { services: session.services } : {}),
+        onTranscript: entry => {
+          session.log.push({
+            ...entry,
+            content: entry.content.replaceAll(session.secretConfig.figmaToken, '[REDACTED]'),
+          });
+        },
         onEvent: async event => {
           session.currentStage = event.stage;
           if (event.attempt !== undefined) session.attempt = event.attempt;
@@ -107,7 +118,7 @@ function redactConfig(config: HarnessConfig): SessionRecord['config'] {
   return { ...safe, figmaTokenConfigured: true };
 }
 
-function publicRecord(session: InternalSession): SessionRecord {
+function publicRecord(session: InternalSession, includeTranscript = false): SessionRecord {
   return JSON.parse(JSON.stringify({
     id: session.id,
     status: session.status,
@@ -118,6 +129,7 @@ function publicRecord(session: InternalSession): SessionRecord {
     error: session.error,
     config: session.config,
     state: session.state,
+    ...(includeTranscript ? { transcript: session.log } : {}),
   })) as SessionRecord;
 }
 

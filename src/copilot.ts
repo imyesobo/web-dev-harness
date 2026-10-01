@@ -6,15 +6,30 @@ import {
   type PermissionHandler,
 } from '@github/copilot-sdk';
 
+/** Conversation listener; role/content mirror a chat timeline. */
+export type TranscriptListener = (
+  role: 'user' | 'assistant' | 'reasoning' | 'tool',
+  content: string,
+) => void;
+
 export class CopilotAgent {
   readonly #client: CopilotClient;
+  readonly #onTranscript: TranscriptListener | undefined;
   #session: CopilotSession | undefined;
 
   constructor(
     readonly workspace: string,
     readonly model: string,
+    onTranscript?: TranscriptListener,
   ) {
-    this.#client = new CopilotClient({ mode: 'empty', workingDirectory: workspace });
+    this.#onTranscript = onTranscript;
+    // 'empty' mode disables keychain access and cannot reuse the Copilot CLI
+    // login; 'copilot-cli' shares the local CLI credentials. Session safety is
+    // enforced per-session below (workspace-only permissions, no MCP).
+    this.#client = new CopilotClient({
+      mode: 'copilot-cli',
+      workingDirectory: workspace,
+    });
   }
 
   async start(systemPrompt: string): Promise<void> {
@@ -28,11 +43,25 @@ export class CopilotAgent {
       onPermissionRequest: workspacePermissions(this.workspace),
       systemMessage: { mode: 'append', content: systemPrompt },
     });
+    if (this.#onTranscript) {
+      const emit = this.#onTranscript;
+      this.#session.on(event => {
+        if (event.type === 'assistant.message' && event.data.content.trim()) {
+          emit('assistant', event.data.content);
+        } else if (event.type === 'assistant.reasoning' && event.data.content?.trim()) {
+          emit('reasoning', event.data.content);
+        } else if (event.type === 'tool.execution_start') {
+          emit('tool', describeToolCall(event.data.toolName, event.data.arguments));
+        }
+      });
+    }
   }
 
   async prompt(prompt: string): Promise<string> {
     if (!this.#session) throw new Error('Copilot session has not been started');
-    const event = await this.#session.sendAndWait({ prompt });
+    this.#onTranscript?.('user', prompt);
+    // Implementation turns write many files; the 60s default is far too short.
+    const event = await this.#session.sendAndWait({ prompt }, 30 * 60 * 1000);
     if (!event) throw new Error('Copilot returned no response');
     return event.data.content;
   }
@@ -59,4 +88,11 @@ export function workspacePermissions(workspace: string): PermissionHandler {
     }
     return { kind: 'approve-once' };
   };
+}
+
+function describeToolCall(toolName: string, args: unknown): string {
+  if (args === undefined) return toolName;
+  let serialized = JSON.stringify(args);
+  if (serialized.length > 400) serialized = `${serialized.slice(0, 400)}…`;
+  return `${toolName} ${serialized}`;
 }

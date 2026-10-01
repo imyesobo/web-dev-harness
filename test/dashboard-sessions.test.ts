@@ -15,6 +15,14 @@ const input = {
   skipPublish: true,
 };
 
+async function until(condition: () => boolean): Promise<void> {
+  const deadline = Date.now() + 2000;
+  while (!condition()) {
+    if (Date.now() > deadline) throw new Error('Condition not met in time');
+    await new Promise(resolve => setTimeout(resolve, 5));
+  }
+}
+
 test('session manager exposes progress without returning secrets', async () => {
   let release: (() => void) | undefined;
   const waiting = new Promise<void>(resolve => {
@@ -26,12 +34,37 @@ test('session manager exposes progress without returning secrets', async () => {
   });
 
   const session = manager.start(input);
-  await new Promise(resolve => setTimeout(resolve, 0));
+  await until(() => manager.get(session.id)?.status === 'running');
   const visible = manager.get(session.id);
   assert.equal(visible?.status, 'running');
   assert.equal(visible?.currentStage, 'ingest');
   assert.equal(JSON.stringify(visible).includes('do-not-return'), false);
   release?.();
+});
+
+test('session detail exposes a redacted transcript; the list does not', async () => {
+  const manager = new SessionManager(async (_config, options?: HarnessRunOptions) => {
+    options?.onTranscript?.({
+      at: new Date().toISOString(),
+      stage: 'specification',
+      role: 'user',
+      content: 'prompt with secret do-not-return inside',
+    });
+    options?.onTranscript?.({
+      at: new Date().toISOString(),
+      stage: 'specification',
+      role: 'assistant',
+      content: 'the specification',
+    });
+  });
+  const session = manager.start(input);
+  await until(() => manager.get(session.id)?.status === 'completed');
+  const detail = manager.get(session.id);
+  assert.equal(detail?.transcript?.length, 2);
+  assert.equal(detail?.transcript?.[0]?.content.includes('do-not-return'), false);
+  assert.match(detail?.transcript?.[0]?.content ?? '', /\[REDACTED\]/);
+  assert.equal(detail?.transcript?.[1]?.role, 'assistant');
+  assert.equal('transcript' in (manager.list()[0] ?? {}), false);
 });
 
 test('session manager cancels an active workflow', async () => {
@@ -42,9 +75,9 @@ test('session manager cancels an active workflow', async () => {
     options?.signal?.throwIfAborted();
   });
   const session = manager.start(input);
-  await new Promise(resolve => setTimeout(resolve, 0));
+  await until(() => manager.get(session.id)?.status === 'running');
   const cancelled = manager.cancel(session.id);
-  await new Promise(resolve => setTimeout(resolve, 0));
+  await until(() => manager.get(session.id)?.status === 'cancelled');
   assert.equal(cancelled?.status, 'cancelling');
   assert.equal(manager.get(session.id)?.status, 'cancelled');
 });
@@ -61,12 +94,10 @@ test('session manager serializes workflows sharing a workspace', async () => {
   });
   const first = manager.start(input);
   const second = manager.start({ ...input, workItemId: 43 });
-  await new Promise(resolve => setTimeout(resolve, 0));
-  assert.equal(manager.get(first.id)?.status, 'running');
+  await until(() => manager.get(first.id)?.status === 'running');
   assert.equal(manager.get(second.id)?.status, 'queued');
   releases.shift()?.();
-  await new Promise(resolve => setTimeout(resolve, 0));
-  assert.equal(manager.get(second.id)?.status, 'running');
+  await until(() => manager.get(second.id)?.status === 'running');
   assert.equal(maximumActive, 1);
   releases.shift()?.();
 });

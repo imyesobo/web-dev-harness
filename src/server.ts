@@ -5,6 +5,7 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { SessionManager } from './dashboard/sessions.js';
 import type { SessionConfigInput } from './dashboard/types.js';
+import { createDemoServices, demoSessionInput, prepareDemoWorkspace } from './demo.js';
 
 const staticRoot = fileURLToPath(new URL('../ui/', import.meta.url));
 
@@ -71,6 +72,11 @@ async function handleRequest(
       }
       return;
     }
+    if (method === 'POST' && url.pathname === '/api/demo') {
+      const workspace = await prepareDemoWorkspace();
+      sendJson(response, 202, manager.start(demoSessionInput(workspace), createDemoServices()));
+      return;
+    }
     const match = /^\/api\/sessions\/([0-9a-f-]+)(?:\/(cancel))?$/.exec(url.pathname);
     if (match) {
       const id = match[1] ?? '';
@@ -95,7 +101,8 @@ async function handleRequest(
   }
   const body = await readFile(path.join(root, asset));
   response.writeHead(200, {
-    'Cache-Control': asset === 'index.html' ? 'no-store' : 'public, max-age=3600',
+    // no-cache: local dev server; a stale bundle hid UI changes behind max-age.
+    'Cache-Control': 'no-cache',
     'Content-Type': contentType(asset),
     'Content-Security-Policy': "default-src 'self'; connect-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'",
     'X-Content-Type-Options': 'nosniff',
