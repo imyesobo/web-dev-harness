@@ -4,14 +4,35 @@ import type { HarnessState, StageName } from './types.js';
 
 export async function loadState(file: string, workItemId: number): Promise<HarnessState> {
   try {
-    const state = JSON.parse(await readFile(file, 'utf8')) as HarnessState;
+    const state = JSON.parse(await readFile(file, 'utf8')) as HarnessState & { specification?: string };
     if (state.workItemId !== workItemId) {
       throw new Error(`State belongs to work item ${state.workItemId}, not ${workItemId}`);
+    }
+    state.steps ??= {};
+    state.history ??= [];
+    state.agentCalls ??= 0;
+    // Pre-step state files stored the specification at the top level.
+    if (state.specification !== undefined) {
+      state.steps.specification ??= {
+        stepId: 'specification',
+        executor: 'github-agent',
+        status: 'completed',
+        outputs: { specification: state.specification },
+      };
+      delete state.specification;
     }
     return state;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-    return { workItemId, completedStages: [], attempts: 0, updatedAt: new Date().toISOString() };
+    return {
+      workItemId,
+      completedStages: [],
+      attempts: 0,
+      steps: {},
+      history: [],
+      agentCalls: 0,
+      updatedAt: new Date().toISOString(),
+    };
   }
 }
 

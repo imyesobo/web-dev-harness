@@ -127,7 +127,8 @@ export async function prepareDemoWorkspace(): Promise<string> {
   return workspace;
 }
 
-export function demoSessionInput(workspace: string): SessionConfigInput {
+/** Hybrid mode hands the investigative steps to a developer assisted by M365 Copilot. */
+export function demoSessionInput(workspace: string, hybrid = false): SessionConfigInput {
   return {
     workspace,
     workItemId: demoWorkItem.id,
@@ -143,6 +144,9 @@ export function demoSessionInput(workspace: string): SessionConfigInput {
     openApiPath: 'openapi.yaml',
     resultFiles: [],
     skipPublish: false,
+    ...(hybrid
+      ? { executors: { 'requirements-analysis': 'human-m365', 'impact-analysis': 'human-m365' } }
+      : {}),
   };
 }
 

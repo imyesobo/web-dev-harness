@@ -1,8 +1,16 @@
-import type { HarnessConfig, HarnessState, StageName, TranscriptEntry } from '../types.js';
+import type {
+  ExecutorType,
+  HarnessConfig,
+  HarnessState,
+  HumanInputRequest,
+  StageName,
+  TranscriptEntry,
+} from '../types.js';
 
 export type SessionStatus =
   | 'queued'
   | 'running'
+  | 'waiting_for_human'
   | 'cancelling'
   | 'completed'
   | 'failed'
@@ -24,6 +32,8 @@ export interface SessionConfigInput {
   copilotModel?: string;
   resultFiles?: string[];
   skipPublish?: boolean;
+  /** Overrides of the default executor per step, e.g. { "requirements-analysis": "human-m365" }. */
+  executors?: Partial<Record<StageName, ExecutorType>>;
 }
 
 export interface SessionRecord {
@@ -36,6 +46,8 @@ export interface SessionRecord {
   error?: string;
   config: Omit<HarnessConfig, 'figmaToken'> & { figmaTokenConfigured: boolean };
   state?: HarnessState;
+  /** Present while the workflow is paused on a human-assisted step. */
+  pendingInput?: HumanInputRequest;
   /** Only present on the session detail endpoint, not the list. */
   transcript?: TranscriptEntry[];
 }

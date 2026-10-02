@@ -19,6 +19,11 @@ test('demo workspace yields a valid session config and OpenAPI contract', async 
   const openApi = await loadOpenApi(config.openApiPath) as { openapi: string; paths: object };
   assert.match(openApi.openapi, /^3\./);
   assert.ok('/feedback' in openApi.paths);
+  assert.equal(config.executors['requirements-analysis'], 'github-agent');
+  const hybrid = createSessionConfig(demoSessionInput(workspace, true), 'demo-hybrid');
+  assert.equal(hybrid.executors['requirements-analysis'], 'human-m365');
+  assert.equal(hybrid.executors['impact-analysis'], 'human-m365');
+  assert.equal(hybrid.executors.implementation, 'github-agent');
 });
 
 test('demo services mock every external integration', async () => {

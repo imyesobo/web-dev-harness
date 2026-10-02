@@ -1,17 +1,35 @@
 import { randomUUID } from 'node:crypto';
 import { loadState } from '../state.js';
-import type { HarnessConfig, HarnessRunOptions, HarnessServices, TranscriptEntry } from '../types.js';
+import type {
+  HarnessConfig,
+  HarnessRunOptions,
+  HarnessServices,
+  HumanInputRequest,
+  StageName,
+  StepOutputs,
+  TranscriptEntry,
+} from '../types.js';
 import { runHarness } from '../harness.js';
+import { normalizeStepOutputs } from '../workflow.js';
 import { createSessionConfig } from './config.js';
 import type { SessionConfigInput, SessionRecord, SessionStatus } from './types.js';
 
-type HarnessRunner = (config: HarnessConfig, options?: HarnessRunOptions) => Promise<void>;
+type HarnessRunner = (config: HarnessConfig, options?: HarnessRunOptions) => Promise<unknown>;
+
+/** Raised when outputs are submitted for a step the workflow is not waiting on. */
+export class StepConflictError extends Error {}
+
+interface PendingInput {
+  request: HumanInputRequest;
+  resolve: (outputs: StepOutputs) => void;
+}
 
 interface InternalSession extends SessionRecord {
   secretConfig: HarnessConfig;
   controller: AbortController;
   services?: HarnessServices;
   log: TranscriptEntry[];
+  pending?: PendingInput;
 }
 
 export class SessionManager {
@@ -61,12 +79,28 @@ export class SessionManager {
     const session = this.#sessions.get(id);
     if (!session || terminal(session.status)) return session && publicRecord(session);
     session.controller.abort();
+    delete session.pending;
     if (session.status === 'queued') {
       session.status = 'cancelled';
       session.endedAt = new Date().toISOString();
     } else {
       session.status = 'cancelling';
     }
+    return publicRecord(session);
+  }
+
+  /** Accepts structured human outputs and resumes the paused workflow. */
+  submit(id: string, stepId: string, outputs: unknown): SessionRecord | undefined {
+    const session = this.#sessions.get(id);
+    if (!session) return undefined;
+    const pending = session.pending;
+    if (session.status !== 'waiting_for_human' || pending?.request.stepId !== stepId) {
+      throw new StepConflictError(`Session is not waiting for input on step ${stepId}`);
+    }
+    const normalized = normalizeStepOutputs(stepId as StageName, outputs);
+    delete session.pending;
+    session.status = 'running';
+    pending.resolve(normalized);
     return publicRecord(session);
   }
 
@@ -86,13 +120,31 @@ export class SessionManager {
         onEvent: async event => {
           session.currentStage = event.stage;
           if (event.attempt !== undefined) session.attempt = event.attempt;
-          if (event.status === 'completed') {
-            session.state = await loadState(
-              session.secretConfig.stateFile,
-              session.secretConfig.workItemId,
-            );
-          }
+          session.state = await loadState(
+            session.secretConfig.stateFile,
+            session.secretConfig.workItemId,
+          );
         },
+        awaitHumanInput: request => new Promise<StepOutputs>((resolve, reject) => {
+          const signal = session.controller.signal;
+          if (signal.aborted) {
+            reject(signal.reason);
+            return;
+          }
+          const onAbort = () => reject(signal.reason);
+          signal.addEventListener('abort', onAbort, { once: true });
+          session.pending = {
+            request: {
+              ...request,
+              briefing: request.briefing.replaceAll(session.secretConfig.figmaToken, '[REDACTED]'),
+            },
+            resolve: outputs => {
+              signal.removeEventListener('abort', onAbort);
+              resolve(outputs);
+            },
+          };
+          session.status = 'waiting_for_human';
+        }),
       });
       if (!session.controller.signal.aborted) session.status = 'completed';
     } catch (error) {
@@ -129,6 +181,7 @@ function publicRecord(session: InternalSession, includeTranscript = false): Sess
     error: session.error,
     config: session.config,
     state: session.state,
+    pendingInput: session.pending?.request,
     ...(includeTranscript ? { transcript: session.log } : {}),
   })) as SessionRecord;
 }

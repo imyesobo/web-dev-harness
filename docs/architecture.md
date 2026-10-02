@@ -153,6 +153,27 @@ has no seam on purpose — the demo exercises the real Copilot session with the
 local CLI credentials, so the programmatic/agentic interaction above is
 identical in demo and production.
 
+## Hybrid attended execution
+
+Steps are declared in [src/workflow.ts](../src/workflow.ts) with a default
+executor and the executors they accept. The harness runs every assignable step
+through one path: mark started → execute → validate outputs against the step's
+output contract → checkpoint. Only the *execute* part differs:
+
+```mermaid
+flowchart LR
+    H[Human + M365 Copilot] -- "structured outputs" --> S[(Workflow state<br/>steps · history · agentCalls)]
+    A[GitHub Copilot agent] -- "JSON / text outputs" --> S
+    T[Deterministic tool] -- "outputs" --> S
+    S -- "workflowOutputs()" --> N[Downstream steps]
+```
+
+A human step moves the step to `waiting_for_human` and persists it. With an
+attended channel (the dashboard's `awaitHumanInput`) the run blocks until
+outputs are submitted; without one (CLI) `runHarness` returns
+`{ status: 'waiting_for_human' }` and `--submit` resumes it. Step status and
+workflow progression are independent of the executor type.
+
 ## Extension points for harness developers
 
 The harness is improved along two independent seams:
