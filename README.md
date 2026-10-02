@@ -87,6 +87,33 @@ to run the complete five-stage workflow without any external accounts. The demo:
 The session appears in the dashboard like any other; the temporary workspace
 path is shown when the demo starts so you can inspect the files Copilot writes.
 
+## Hybrid attended execution
+
+Every workflow step has an executor: `human`, `human-m365` (Human + Microsoft
+365 Copilot), `github-agent`, or `tool`. The harness owns state, progress,
+validation and repair; executors are interchangeable resources.
+
+| Step | Default | Assignable to |
+| --- | --- | --- |
+| Ingest Sources, Validation, Publish | tool | tool only |
+| Requirements Analysis, Impact Analysis, Implementation Plan, Code Generation | github-agent | human, human-m365, github-agent |
+
+When the workflow reaches a human step the session status becomes
+`waiting_for_human`. The dashboard shows a briefing to paste into M365 Copilot
+and a structured form; submitting it (`POST /api/sessions/<id>/steps/<stepId>`
+with `{ "outputs": { ... } }`) persists the outputs into `state.json` and
+resumes the workflow. Downstream agent steps read those outputs exactly as
+they read agent outputs. Each session shows its executor per step, execution
+history, and a cost summary (human/agent/tool steps, Copilot calls, agent
+calls avoided). **Run hybrid demo** assigns both analysis steps to
+Human + M365 Copilot.
+
+On the CLI, set `HARNESS_STEP_EXECUTORS`, e.g.
+`requirements-analysis=human-m365,impact-analysis=human-m365`. The run pauses
+and exits, printing the briefing; resume with
+`node dist/src/harness.js --submit outputs.json`, where the file contains
+`{ "stepId": "requirements-analysis", "outputs": { ... } }`.
+
 ## Configuration
 
 | Variable | Purpose |
@@ -107,6 +134,7 @@ path is shown when the demo starts so you can inspect the files Copilot writes.
 | `OPENAPI_PATH` | JSON or YAML OpenAPI 3 document in the workspace |
 | `COPILOT_MODEL` | Copilot model; defaults to `gpt-5` |
 | `TEST_RESULT_FILES` | Comma-separated JUnit, TRX, or Playwright JSON files |
+| `HARNESS_STEP_EXECUTORS` | Optional `step=executor` pairs, comma-separated |
 
 `AZURE_DEVOPS_EXT_PAT` can replace `SYSTEM_ACCESSTOKEN` outside Azure Pipelines.
 Secrets must be provided through secret variables; never place them in source.

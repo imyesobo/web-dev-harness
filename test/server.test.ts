@@ -24,4 +24,11 @@ test('dashboard server serves the UI and validates session configuration', async
   });
   assert.equal(invalid.status, 400);
   assert.match(await invalid.text(), /workspace is required/);
+
+  const missing = await fetch(`http://${host}:${port}/api/sessions/0000-aaaa/steps/requirements-analysis`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: '{"outputs":{"summary":"x"}}',
+  });
+  assert.equal(missing.status, 404);
 });

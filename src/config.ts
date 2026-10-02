@@ -1,5 +1,6 @@
 import path from 'node:path';
 import type { HarnessConfig } from './types.js';
+import { resolveExecutors } from './workflow.js';
 
 function required(env: NodeJS.ProcessEnv, name: string): string {
   const value = env[name]?.trim();
@@ -48,5 +49,11 @@ export function loadConfig(
       .filter(Boolean)
       .map(value => path.resolve(workspace, value)),
     skipPublish,
+    executors: resolveExecutors(Object.fromEntries(
+      (env.HARNESS_STEP_EXECUTORS ?? '')
+        .split(',')
+        .map(pair => pair.split('=').map(value => value.trim()))
+        .filter(([stepId]) => stepId),
+    )),
   };
 }

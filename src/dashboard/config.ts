@@ -1,5 +1,6 @@
 import path from 'node:path';
 import type { HarnessConfig } from '../types.js';
+import { resolveExecutors } from '../workflow.js';
 import type { SessionConfigInput } from './types.js';
 
 function text(value: unknown, name: string): string {
@@ -49,6 +50,7 @@ export function createSessionConfig(
     resultFiles: (input.resultFiles ?? [])
       .map(file => resolveWithin(workspace, file, 'resultFiles')),
     skipPublish,
+    executors: resolveExecutors(input.executors ?? {}),
   };
 }
 

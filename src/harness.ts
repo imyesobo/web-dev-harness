@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { readFile } from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
 import { loadPromptSet } from './agents.js';
 import { AzureClient } from './cli/azure.js';
@@ -6,21 +7,38 @@ import { FigmaClient } from './cli/figma.js';
 import { loadConfig } from './config.js';
 import { CopilotAgent } from './copilot.js';
 import { loadOpenApi } from './openapi.js';
-import { completeStage, loadState, saveState } from './state.js';
+import { loadState, saveState } from './state.js';
 import type {
   AzureService,
   HarnessConfig,
+  HarnessOutcome,
   HarnessRunOptions,
   HarnessState,
   IngestedContext,
   StageName,
+  StepOutputs,
+  TranscriptEntry,
 } from './types.js';
 import { verify } from './verification.js';
+import {
+  agentStepPrompt,
+  executorLabel,
+  humanInputRequest,
+  isHumanExecutor,
+  markStepCompleted,
+  markStepResumed,
+  markStepStarted,
+  markStepWaiting,
+  normalizeStepOutputs,
+  outputText,
+  parseAgentOutputs,
+  workflowOutputs,
+} from './workflow.js';
 
 export async function runHarness(
   config: HarnessConfig,
   options: HarnessRunOptions = {},
-): Promise<void> {
+): Promise<HarnessOutcome> {
   const state = await loadState(config.stateFile, config.workItemId);
   const azure = options.services?.azure ?? new AzureClient({
     organization: config.adoOrganization,
@@ -30,56 +48,104 @@ export async function runHarness(
       ? { accessToken: process.env.SYSTEM_ACCESSTOKEN ?? process.env.AZURE_DEVOPS_EXT_PAT }
       : {}),
   });
-
-  if (!done(state, 'ingest')) {
-    await stageStarted(options, 'ingest');
-    state.context = await ingest(config, azure, options);
-    await checkpoint(config, state, 'ingest', options);
-  }
-  if (!state.context) throw new Error('Ingestion state is missing');
-
-  const needsAgent = !done(state, 'specification')
-    || !done(state, 'implementation')
-    || !done(state, 'verification');
   let currentStage: StageName | undefined;
-  const agent = new CopilotAgent(config.workspace, config.copilotModel, (role, content) => {
+  const transcript = (role: TranscriptEntry['role'], content: string): void => {
     options.onTranscript?.({
       at: new Date().toISOString(),
       ...(currentStage ? { stage: currentStage } : {}),
       role,
       content,
     });
-  });
-  const prompts = await loadPromptSet();
-  if (needsAgent) {
-    options.signal?.throwIfAborted();
-    await agent.start(prompts.system);
-  }
-  try {
-    if (!done(state, 'specification')) {
-      currentStage = 'specification';
-      await stageStarted(options, 'specification');
-      state.specification = await agent.prompt(
-        `${prompts.specifier}\n\nContext:\n${JSON.stringify(state.context, null, 2)}`,
-      );
-      await checkpoint(config, state, 'specification', options);
-    }
-    if (!state.specification) throw new Error('Specification state is missing');
+  };
 
-    if (!done(state, 'implementation')) {
-      currentStage = 'implementation';
-      await stageStarted(options, 'implementation');
-      await agent.prompt([
-        'Implement this approved specification now. You may edit files only in the workspace.',
-        state.specification,
-        `Source context:\n${JSON.stringify(state.context, null, 2)}`,
-      ].join('\n\n'));
-      await checkpoint(config, state, 'implementation', options);
+  const begin = async (stage: StageName): Promise<void> => {
+    options.signal?.throwIfAborted();
+    currentStage = stage;
+    const executor = config.executors[stage];
+    if (state.steps[stage]?.status !== 'waiting_for_human') markStepStarted(state, stage, executor);
+    await saveState(config.stateFile, state);
+    await options.onEvent?.({ stage, status: 'started', executor });
+  };
+  const finish = async (stage: StageName, outputs: StepOutputs): Promise<void> => {
+    options.signal?.throwIfAborted();
+    const executor = config.executors[stage];
+    markStepCompleted(state, stage, executor, outputs);
+    await saveState(config.stateFile, state);
+    await options.onEvent?.({ stage, status: 'completed', executor });
+    console.log(`Completed stage: ${stage} (${executor})`);
+  };
+
+  if (!done(state, 'ingest')) {
+    await begin('ingest');
+    state.context = await ingest(config, azure, options);
+    await finish('ingest', { summary: 'Work item, Figma design and OpenAPI contract ingested' });
+  }
+  if (!state.context) throw new Error('Ingestion state is missing');
+
+  const agent = new CopilotAgent(config.workspace, config.copilotModel, transcript);
+  const prompts = await loadPromptSet();
+  let agentStarted = false;
+  const ask = async (prompt: string): Promise<string> => {
+    options.signal?.throwIfAborted();
+    if (!agentStarted) {
+      await agent.start(prompts.system);
+      agentStarted = true;
     }
+    state.agentCalls += 1;
+    await saveState(config.stateFile, state);
+    return agent.prompt(prompt);
+  };
+
+  /** Runs an assignable step; returns false when it is parked waiting for a human. */
+  const runStep = async (stage: StageName, agentPrompt: () => string): Promise<boolean> => {
+    if (done(state, stage)) return true;
+    await begin(stage);
+    const executor = config.executors[stage];
+    if (!isHumanExecutor(executor)) {
+      await finish(stage, parseAgentOutputs(stage, await ask(agentPrompt())));
+      return true;
+    }
+    const request = humanInputRequest(stage, executor, state);
+    markStepWaiting(state, stage, executor);
+    await saveState(config.stateFile, state);
+    transcript('user', `Waiting for ${executorLabel(executor)}: ${request.instructions}`);
+    await options.onEvent?.({ stage, status: 'waiting_for_human', executor });
+    if (!options.awaitHumanInput) return false;
+    const outputs = normalizeStepOutputs(stage, await options.awaitHumanInput(request));
+    options.signal?.throwIfAborted();
+    transcript('human', JSON.stringify(outputs, null, 2));
+    markStepResumed(state, stage, executor);
+    await options.onEvent?.({ stage, status: 'resumed', executor });
+    await finish(stage, outputs);
+    return true;
+  };
+
+  try {
+    for (const stage of ['requirements-analysis', 'impact-analysis'] as const) {
+      if (!await runStep(stage, () => agentStepPrompt(stage, state))) {
+        return { status: 'waiting_for_human', stepId: stage };
+      }
+    }
+
+    const specified = await runStep('specification', () => [
+      prompts.specifier,
+      `Context:\n${JSON.stringify(state.context, null, 2)}`,
+      `Outputs of completed workflow steps:\n${JSON.stringify(workflowOutputs(state), null, 2)}`,
+    ].join('\n\n'));
+    if (!specified) return { status: 'waiting_for_human', stepId: 'specification' };
+    const specification = outputText(state, 'specification', 'specification');
+    if (!specification) throw new Error('Specification state is missing');
+
+    const implemented = await runStep('implementation', () => [
+      'Implement this approved specification now. You may edit files only in the workspace.',
+      specification,
+      `Source context:\n${JSON.stringify(state.context, null, 2)}`,
+      `Outputs of completed workflow steps:\n${JSON.stringify(workflowOutputs(state), null, 2)}`,
+    ].join('\n\n'));
+    if (!implemented) return { status: 'waiting_for_human', stepId: 'implementation' };
 
     if (!done(state, 'verification')) {
-      currentStage = 'verification';
-      await stageStarted(options, 'verification');
+      await begin('verification');
       await verify({
         workspace: config.workspace,
         maxAttempts: 3,
@@ -90,24 +156,24 @@ export async function runHarness(
         onAttempt: async attempt => {
           state.attempts = attempt;
           await saveState(config.stateFile, state);
-          await options.onEvent?.({ stage: 'verification', status: 'started', attempt });
+          await options.onEvent?.({ stage: 'verification', status: 'started', executor: 'tool', attempt });
         },
         onFailure: async errorContext => {
-          await agent.prompt([
+          await ask([
             'Fix only the implementation or tests responsible for this exact failure.',
             'Do not publish, deploy, or advance the workflow.',
             errorContext,
           ].join('\n\n'));
         },
       });
-      await checkpoint(config, state, 'verification', options);
+      await finish('verification', { attempts: state.attempts });
     }
   } finally {
-    if (needsAgent) await agent.stop();
+    if (agentStarted) await agent.stop();
   }
 
   if (!done(state, 'publish')) {
-    await stageStarted(options, 'publish');
+    await begin('publish');
     if (!config.skipPublish) {
       if (!config.pipelineId) throw new Error('Missing validated pipeline ID');
       state.publication ??= {
@@ -140,8 +206,23 @@ export async function runHarness(
         await saveState(config.stateFile, state);
       }
     }
-    await checkpoint(config, state, 'publish', options);
+    await finish('publish', config.skipPublish ? { skipped: true } : { ...state.publication });
   }
+  return { status: 'completed' };
+}
+
+/** Records structured outputs for a step parked waiting for a human, so a re-run resumes past it. */
+export async function submitHumanOutputs(config: HarnessConfig, submission: unknown): Promise<void> {
+  const { stepId, outputs } = (submission ?? {}) as { stepId?: StageName; outputs?: unknown };
+  const state = await loadState(config.stateFile, config.workItemId);
+  const step = stepId ? state.steps[stepId] : undefined;
+  if (!stepId || step?.status !== 'waiting_for_human') {
+    throw new Error(`Step ${String(stepId)} is not waiting for human input`);
+  }
+  const normalized = normalizeStepOutputs(stepId, outputs);
+  markStepResumed(state, stepId, step.executor);
+  markStepCompleted(state, stepId, step.executor, normalized);
+  await saveState(config.stateFile, state);
 }
 
 async function ingest(
@@ -163,33 +244,35 @@ function done(state: HarnessState, stage: StageName): boolean {
   return state.completedStages.includes(stage);
 }
 
-async function checkpoint(
-  config: HarnessConfig,
-  state: HarnessState,
-  stage: StageName,
-  options: HarnessRunOptions,
-): Promise<void> {
-  options.signal?.throwIfAborted();
-  completeStage(state, stage);
-  await saveState(config.stateFile, state);
-  await options.onEvent?.({ stage, status: 'completed' });
-  console.log(`Completed stage: ${stage}`);
-}
-
-async function stageStarted(options: HarnessRunOptions, stage: StageName): Promise<void> {
-  options.signal?.throwIfAborted();
-  await options.onEvent?.({ stage, status: 'started' });
-}
-
 async function main(): Promise<void> {
   if (process.argv.includes('--help')) {
-    console.log(`Usage: web-dev-harness [--skip-publish]
+    console.log(`Usage: web-dev-harness [--skip-publish] [--submit <outputs.json>]
 
-Configuration is supplied through environment variables. See README.md.`);
+Configuration is supplied through environment variables. See README.md.
+--submit records {"stepId": "...", "outputs": {...}} for a step waiting for
+human input and resumes the workflow.`);
     return;
   }
   try {
-    await runHarness(loadConfig());
+    const config = loadConfig();
+    const submitIndex = process.argv.indexOf('--submit');
+    if (submitIndex !== -1) {
+      const file = process.argv[submitIndex + 1];
+      if (!file) throw new Error('--submit requires a JSON file path');
+      await submitHumanOutputs(config, JSON.parse(await readFile(file, 'utf8')));
+    }
+    const outcome = await runHarness(config);
+    if (outcome.status === 'waiting_for_human' && outcome.stepId) {
+      const state = await loadState(config.stateFile, config.workItemId);
+      const request = humanInputRequest(outcome.stepId, config.executors[outcome.stepId], state);
+      console.log([
+        `Workflow paused: ${request.title} is waiting for ${executorLabel(request.executor)}.`,
+        `Expected outputs: ${request.fields.map(field => `${field.name} (${field.kind})`).join(', ')}`,
+        `Resume with: web-dev-harness --submit <file> where the file contains {"stepId": "${request.stepId}", "outputs": {...}}`,
+        '',
+        request.briefing,
+      ].join('\n'));
+    }
   } catch (error) {
     console.error(error instanceof Error ? error.stack : error);
     process.exitCode = 1;

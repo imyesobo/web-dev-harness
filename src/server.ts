@@ -3,7 +3,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { SessionManager } from './dashboard/sessions.js';
+import { SessionManager, StepConflictError } from './dashboard/sessions.js';
 import type { SessionConfigInput } from './dashboard/types.js';
 import { createDemoServices, demoSessionInput, prepareDemoWorkspace } from './demo.js';
 
@@ -74,7 +74,22 @@ async function handleRequest(
     }
     if (method === 'POST' && url.pathname === '/api/demo') {
       const workspace = await prepareDemoWorkspace();
-      sendJson(response, 202, manager.start(demoSessionInput(workspace), createDemoServices()));
+      const hybrid = url.searchParams.get('mode') === 'hybrid';
+      sendJson(response, 202, manager.start(demoSessionInput(workspace, hybrid), createDemoServices()));
+      return;
+    }
+    const step = /^\/api\/sessions\/([0-9a-f-]+)\/steps\/([a-z-]+)$/.exec(url.pathname);
+    if (step && method === 'POST') {
+      const body = await readJson(request) as { outputs?: unknown } | null;
+      try {
+        const record = manager.submit(step[1] ?? '', step[2] ?? '', body?.outputs);
+        if (record) sendJson(response, 200, record);
+        else sendJson(response, 404, { error: 'Session not found' });
+      } catch (error) {
+        sendJson(response, error instanceof StepConflictError ? 409 : 400, {
+          error: error instanceof Error ? error.message : 'Invalid outputs',
+        });
+      }
       return;
     }
     const match = /^\/api\/sessions\/([0-9a-f-]+)(?:\/(cancel))?$/.exec(url.pathname);

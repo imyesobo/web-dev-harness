@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { HarnessRunOptions } from '../src/types.js';
-import { SessionManager } from '../src/dashboard/sessions.js';
+import { SessionManager, StepConflictError } from '../src/dashboard/sessions.js';
+import { humanInputRequest } from '../src/workflow.js';
+import { loadState } from '../src/state.js';
 
 const input = {
   workspace: '/workspace',
@@ -100,4 +102,39 @@ test('session manager serializes workflows sharing a workspace', async () => {
   await until(() => manager.get(second.id)?.status === 'running');
   assert.equal(maximumActive, 1);
   releases.shift()?.();
+});
+
+test('session waits for human input, validates it, and resumes', async () => {
+  let received: unknown;
+  const manager = new SessionManager(async (config, options?: HarnessRunOptions) => {
+    const state = await loadState(config.stateFile, config.workItemId);
+    received = await options?.awaitHumanInput?.(
+      humanInputRequest('requirements-analysis', 'human-m365', state),
+    );
+  });
+  const session = manager.start(input);
+  await until(() => manager.get(session.id)?.status === 'waiting_for_human');
+  assert.equal(manager.get(session.id)?.pendingInput?.stepId, 'requirements-analysis');
+  assert.throws(() => manager.submit(session.id, 'impact-analysis', {}), StepConflictError);
+  assert.throws(() => manager.submit(session.id, 'requirements-analysis', {}), /summary is required/);
+  assert.equal(manager.get(session.id)?.status, 'waiting_for_human');
+
+  const resumed = manager.submit(session.id, 'requirements-analysis', { summary: 'done' });
+  assert.equal(resumed?.status, 'running');
+  assert.equal(resumed?.pendingInput, undefined);
+  await until(() => manager.get(session.id)?.status === 'completed');
+  assert.deepEqual(received, { summary: 'done', assumptions: [], acceptanceCriteria: [] });
+  assert.equal(manager.submit('00000000-0000-0000-0000-000000000000', 'x', {}), undefined);
+});
+
+test('session waiting for human input can be cancelled', async () => {
+  const manager = new SessionManager(async (config, options?: HarnessRunOptions) => {
+    const state = await loadState(config.stateFile, config.workItemId);
+    await options?.awaitHumanInput?.(humanInputRequest('impact-analysis', 'human', state));
+  });
+  const session = manager.start(input);
+  await until(() => manager.get(session.id)?.status === 'waiting_for_human');
+  manager.cancel(session.id);
+  await until(() => manager.get(session.id)?.status === 'cancelled');
+  assert.equal(manager.get(session.id)?.pendingInput, undefined);
 });
