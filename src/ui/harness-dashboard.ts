@@ -3,6 +3,7 @@ import { LionButton } from '@lion/ui/button.js';
 import { LionCheckbox } from '@lion/ui/checkbox-group.js';
 import { LionInput } from '@lion/ui/input.js';
 import type { SessionRecord, SessionStatus } from '../dashboard/types.js';
+import type { ProgressSession } from '../progress/schema.js';
 import type { TranscriptEntry } from '../types.js';
 
 if (!customElements.get('lion-button')) customElements.define('lion-button', LionButton);
@@ -73,6 +74,7 @@ export class HarnessDashboard extends LitElement {
 
   static properties = {
     sessions: { state: true },
+    observed: { state: true },
     loading: { state: true },
     message: { state: true },
     expanded: { state: true },
@@ -80,15 +82,19 @@ export class HarnessDashboard extends LitElement {
   };
 
   declare private sessions: SessionRecord[];
+  declare private observed: ProgressSession[];
   declare private loading: boolean;
   declare private message: string;
   declare private expanded: string | undefined;
   declare private transcript: TranscriptEntry[];
   #timer?: number;
+  #events: EventSource | undefined;
+  #refreshQueued = false;
 
   constructor() {
     super();
     this.sessions = [];
+    this.observed = [];
     this.loading = false;
     this.message = '';
     this.expanded = undefined;
@@ -98,12 +104,43 @@ export class HarnessDashboard extends LitElement {
   connectedCallback(): void {
     super.connectedCallback();
     void this.#refresh();
-    this.#timer = window.setInterval(() => void this.#refresh(), 2000);
+    this.#subscribe();
   }
 
   disconnectedCallback(): void {
+    this.#events?.close();
     if (this.#timer !== undefined) window.clearInterval(this.#timer);
     super.disconnectedCallback();
+  }
+
+  /** Live updates over SSE; falls back to a 2s poll if the stream fails. */
+  #subscribe(): void {
+    try {
+      this.#events = new EventSource('/api/events');
+    } catch {
+      this.#pollFallback();
+      return;
+    }
+    const scheduleRefresh = () => {
+      if (this.#refreshQueued) return;
+      this.#refreshQueued = true;
+      window.setTimeout(() => {
+        this.#refreshQueued = false;
+        void this.#refresh();
+      }, 150);
+    };
+    this.#events.addEventListener('snapshot', scheduleRefresh);
+    this.#events.addEventListener('progress', scheduleRefresh);
+    this.#events.addEventListener('error', () => {
+      this.#events?.close();
+      this.#events = undefined;
+      this.#pollFallback();
+    });
+  }
+
+  #pollFallback(): void {
+    if (this.#timer !== undefined) return;
+    this.#timer = window.setInterval(() => void this.#refresh(), 2000);
   }
 
   render() {
@@ -155,6 +192,12 @@ export class HarnessDashboard extends LitElement {
               ? this.sessions.map(session => this.#session(session))
               : html`<p class="empty">No sessions have been started.</p>`}
           </div>
+          <h2 id="observed-title">Observed agent sessions</h2>
+          <div class="sessions" aria-live="polite" aria-labelledby="observed-title">
+            ${this.observed.length
+              ? this.observed.map(session => this.#observedSession(session))
+              : html`<p class="empty">No external agent sessions have reported progress.</p>`}
+          </div>
         </section>
       </main>
     `;
@@ -195,6 +238,22 @@ export class HarnessDashboard extends LitElement {
           <lion-button class="secondary" @click=${() => this.#cancel(session.id)}>Cancel</lion-button>
         ` : nothing}
         ${this.expanded === session.id ? this.#chat() : nothing}
+      </article>
+    `;
+  }
+
+  /** Observed sessions are external agent runtimes; no stage semantics apply. */
+  #observedSession(session: ProgressSession) {
+    return html`
+      <article>
+        <header>
+          <strong>${session.title ?? session.externalId ?? session.id}</strong>
+          <span class="status status-${session.status}">${session.status}</span>
+        </header>
+        <p>${session.runtime}${session.externalId ? html` · ${session.externalId}` : nothing}</p>
+        ${session.currentStep ? html`<p>Step: ${session.currentStep.name}</p>` : nothing}
+        ${session.currentTool ? html`<p class="msg-tool">Tool: ${session.currentTool.name}${session.currentTool.argsSummary ? ` ${session.currentTool.argsSummary}` : ''}</p>` : nothing}
+        ${session.errors.length ? html`<p class="error" role="alert">${session.errors[session.errors.length - 1]}</p>` : nothing}
       </article>
     `;
   }
@@ -301,8 +360,15 @@ export class HarnessDashboard extends LitElement {
 
   async #refresh(): Promise<void> {
     try {
-      const response = await fetch('/api/sessions');
-      if (response.ok) this.sessions = await response.json() as SessionRecord[];
+      const [sessions, progress] = await Promise.all([
+        fetch('/api/sessions'),
+        fetch('/api/progress/sessions'),
+      ]);
+      if (sessions.ok) this.sessions = await sessions.json() as SessionRecord[];
+      if (progress.ok) {
+        const all = await progress.json() as ProgressSession[];
+        this.observed = all.filter(session => session.kind === 'observed');
+      }
       await this.#loadTranscript();
     } catch {
       this.message ||= 'Dashboard server is unavailable.';

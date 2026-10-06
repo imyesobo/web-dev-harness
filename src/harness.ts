@@ -42,14 +42,19 @@ export async function runHarness(
     || !done(state, 'implementation')
     || !done(state, 'verification');
   let currentStage: StageName | undefined;
-  const agent = new CopilotAgent(config.workspace, config.copilotModel, (role, content) => {
-    options.onTranscript?.({
-      at: new Date().toISOString(),
-      ...(currentStage ? { stage: currentStage } : {}),
-      role,
-      content,
-    });
-  });
+  const agent = new CopilotAgent(
+    config.workspace,
+    config.copilotModel,
+    (role, content) => {
+      options.onTranscript?.({
+        at: new Date().toISOString(),
+        ...(currentStage ? { stage: currentStage } : {}),
+        role,
+        content,
+      });
+    },
+    options.onActivity,
+  );
   const prompts = await loadPromptSet();
   if (needsAgent) {
     options.signal?.throwIfAborted();
