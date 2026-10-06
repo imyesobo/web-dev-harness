@@ -1,0 +1,7 @@
+{
+  "id": "web-dev-harness-progress",
+  "name": "Web Dev Harness Progress",
+  "version": "0.1.0",
+  "description": "Reports Claude Code session progress to the local web-dev-harness dashboard and adds a /harness deep-link command.",
+  "modules": ["../hooks/register.ts"]
+}
