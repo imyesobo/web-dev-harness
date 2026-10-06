@@ -1,0 +1,22 @@
+{
+  "name": "web-dev-harness-companion",
+  "displayName": "Web Dev Harness Companion",
+  "description": "Status-bar view of web-dev-harness agent sessions with an open-in-dashboard command. Deliberately light: it never injects into the Copilot chat panel.",
+  "version": "0.1.0",
+  "publisher": "web-dev-harness",
+  "private": true,
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "main": "./extension.js",
+  "activationEvents": ["onStartupFinished"],
+  "contributes": {
+    "commands": [
+      {
+        "command": "webDevHarness.open",
+        "title": "Web Dev Harness: Open dashboard"
+      }
+    ]
+  }
+}

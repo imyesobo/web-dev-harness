@@ -6,7 +6,8 @@
   "type": "module",
   "main": "dist/src/harness.js",
   "bin": {
-    "web-dev-harness": "dist/src/harness.js"
+    "web-dev-harness": "dist/src/harness.js",
+    "harness-observe": "dist/src/cli/observe.js"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json && node scripts/build-ui.mjs",

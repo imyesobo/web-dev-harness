@@ -8,7 +8,7 @@ import { createDashboardServer } from '../src/server.js';
 test('dashboard server serves the UI and validates session configuration', async context => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'harness-ui-'));
   await writeFile(path.join(directory, 'index.html'), '<harness-dashboard></harness-dashboard>');
-  const dashboard = createDashboardServer({ port: 0, staticDirectory: directory });
+  const dashboard = createDashboardServer({ port: 0, staticDirectory: directory, dataDirectory: false });
   const { host, port } = await dashboard.listen();
   context.after(() => dashboard.server.close());
 

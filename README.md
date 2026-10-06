@@ -63,8 +63,18 @@ port. The dashboard lets you:
   `<workspace>/.harness/sessions/<session-id>/state.json`;
 - monitor all sessions started by the running dashboard, their current stage,
   completed checkpoints, and verification attempt;
+- monitor **observed** external agent sessions (Claude Code, `harness-observe`)
+  reporting live progress through the same event bus — see
+  [docs/progress-integration.md](docs/progress-integration.md);
 - cancel active work. Cancellation terminates active verification child
   processes and otherwise takes effect at the next deterministic stage boundary.
+
+Updates stream over Server-Sent Events (`GET /api/events`), with a polling
+fallback. Each session has a deep link at `http://127.0.0.1:4173/sessions/<id>`.
+On startup the server mints a per-run ingest token and writes a discovery file
+to `~/.web-dev-harness/harness.json` (override with `HARNESS_DATA_DIR`) so
+local agent adapters can authenticate; progress history is persisted under the
+same directory.
 
 The server binds only to loopback, applies a restrictive Content Security Policy,
 limits API request bodies, and rejects cross-origin API requests. Figma tokens
@@ -119,3 +129,21 @@ node dist/src/harness.js
 Use `--skip-publish` for a local run that performs stages 1–4 without creating
 Azure resources. A completed skipped publication is checkpointed, so use a
 separate state file when later exercising the real publish stage.
+
+## Integrate with your existing agent workflow
+
+The dashboard is the canonical progress surface for more than harness-owned
+workflows. Two thin adapters report external agent sessions through the same
+versioned event bus:
+
+- **Claude Code**: install the plugin in
+  [integrations/claude-code](integrations/claude-code/) for live progress,
+  a status line, and a `/harness` deep-link command.
+- **Copilot SDK/CLI**: run `harness-observe "<prompt>"` for a sandboxed,
+  observed Copilot session.
+- **VS Code**: the light companion in
+  [integrations/vscode-companion](integrations/vscode-companion/) shows
+  session status in the status bar and deep-links into the dashboard.
+
+See [docs/progress-integration.md](docs/progress-integration.md) for the
+schema, endpoints, auth model, and onboarding steps.

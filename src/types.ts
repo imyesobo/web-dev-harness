@@ -65,6 +65,12 @@ export interface HarnessEvent {
   attempt?: number;
 }
 
+/** Fine-grained agentic-layer activity surfaced to the progress event bus. */
+export interface AgentActivity {
+  type: 'prompt' | 'tool.start' | 'tool.end' | 'turn.end';
+  tool?: { name: string; argsSummary?: string };
+}
+
 export interface TranscriptEntry {
   at: string;
   stage?: StageName;
@@ -108,5 +114,6 @@ export interface HarnessRunOptions {
   signal?: AbortSignal;
   onEvent?: (event: HarnessEvent) => void | Promise<void>;
   onTranscript?: (entry: TranscriptEntry) => void;
+  onActivity?: (activity: AgentActivity) => void;
   services?: HarnessServices;
 }

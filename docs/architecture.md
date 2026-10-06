@@ -42,7 +42,7 @@ flowchart LR
     WS[(Workspace files)]
     EXT[(Azure DevOps / Figma<br/>mocked in demo mode)]
 
-    HD -- "poll /api/sessions (2s loop)" --> SRV
+    HD -- "SSE /api/events (poll fallback)" --> SRV
     SRV --> SM --> RH
     MD --> AG --> RH
     RH --> ST

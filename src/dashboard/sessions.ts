@@ -2,6 +2,8 @@ import { randomUUID } from 'node:crypto';
 import { loadState } from '../state.js';
 import type { HarnessConfig, HarnessRunOptions, HarnessServices, TranscriptEntry } from '../types.js';
 import { runHarness } from '../harness.js';
+import type { ProgressBus } from '../progress/bus.js';
+import type { ProgressEventInput } from '../progress/schema.js';
 import { createSessionConfig } from './config.js';
 import type { SessionConfigInput, SessionRecord, SessionStatus } from './types.js';
 
@@ -17,8 +19,11 @@ interface InternalSession extends SessionRecord {
 export class SessionManager {
   readonly #sessions = new Map<string, InternalSession>();
   readonly #workspaceTails = new Map<string, Promise<void>>();
+  readonly #bus: ProgressBus | undefined;
 
-  constructor(readonly runner: HarnessRunner = runHarness) {}
+  constructor(readonly runner: HarnessRunner = runHarness, bus?: ProgressBus) {
+    this.#bus = bus;
+  }
 
   list(): SessionRecord[] {
     return [...this.#sessions.values()]
@@ -46,6 +51,13 @@ export class SessionManager {
       ...(services ? { services } : {}),
     };
     this.#sessions.set(id, session);
+    this.#bus?.register({
+      kind: 'harness-workflow',
+      runtime: 'harness',
+      id,
+      title: `Work item ${secretConfig.workItemId}`,
+    });
+    this.#publish(session, { type: 'session.start', status: 'waiting' });
     const previous = this.#workspaceTails.get(secretConfig.workspace) ?? Promise.resolve();
     const execution = previous.then(() => this.#run(session));
     this.#workspaceTails.set(secretConfig.workspace, execution);
@@ -64,6 +76,7 @@ export class SessionManager {
     if (session.status === 'queued') {
       session.status = 'cancelled';
       session.endedAt = new Date().toISOString();
+      this.#publish(session, { type: 'session.end', status: 'cancelled' });
     } else {
       session.status = 'cancelling';
     }
@@ -73,6 +86,7 @@ export class SessionManager {
   async #run(session: InternalSession): Promise<void> {
     if (session.controller.signal.aborted) return;
     session.status = 'running';
+    this.#publish(session, { type: 'session.status', status: 'running' });
     try {
       await this.runner(session.secretConfig, {
         signal: session.controller.signal,
@@ -83,9 +97,24 @@ export class SessionManager {
             content: entry.content.replaceAll(session.secretConfig.figmaToken, '[REDACTED]'),
           });
         },
+        onActivity: activity => {
+          if (activity.type === 'tool.start' && activity.tool) {
+            this.#publish(session, { type: 'tool.start', tool: activity.tool });
+          } else if (activity.type === 'tool.end' || activity.type === 'turn.end') {
+            this.#publish(session, { type: 'tool.end' });
+          }
+        },
         onEvent: async event => {
           session.currentStage = event.stage;
           if (event.attempt !== undefined) session.attempt = event.attempt;
+          this.#publish(session, {
+            type: event.status === 'started' ? 'step.start' : 'step.complete',
+            step: {
+              id: event.stage,
+              name: event.stage,
+              ...(event.attempt !== undefined ? { attempt: event.attempt } : {}),
+            },
+          });
           if (event.status === 'completed') {
             session.state = await loadState(
               session.secretConfig.stateFile,
@@ -104,11 +133,42 @@ export class SessionManager {
       }
     } finally {
       session.endedAt ??= new Date().toISOString();
+      const outcome = session.status === 'completed'
+        ? 'completed'
+        : session.status === 'cancelled' ? 'cancelled' : 'failed';
+      this.#publish(session, {
+        type: 'session.end',
+        status: outcome,
+        ...(session.error ? { message: session.error } : {}),
+      });
       try {
         session.state = await loadState(session.secretConfig.stateFile, session.secretConfig.workItemId);
       } catch {
         // A failure before the first checkpoint has no persisted state.
       }
+    }
+  }
+
+  #publish(session: InternalSession, event: ProgressEventInput): void {
+    if (!this.#bus) return;
+    try {
+      const secret = session.secretConfig.figmaToken;
+      this.#bus.publish(session.id, {
+        ...event,
+        ...(event.message !== undefined ? { message: event.message.replaceAll(secret, '[REDACTED]') } : {}),
+        ...(event.tool
+          ? {
+              tool: {
+                name: event.tool.name,
+                ...(event.tool.argsSummary !== undefined
+                  ? { argsSummary: event.tool.argsSummary.replaceAll(secret, '[REDACTED]') }
+                  : {}),
+              },
+            }
+          : {}),
+      });
+    } catch {
+      // Progress publication must never break a workflow run.
     }
   }
 }
