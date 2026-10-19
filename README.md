@@ -119,3 +119,20 @@ node dist/src/harness.js
 Use `--skip-publish` for a local run that performs stages 1–4 without creating
 Azure resources. A completed skipped publication is checkpointed, so use a
 separate state file when later exercising the real publish stage.
+
+## Copilot Dynamic Workflow
+
+The project also provides a Copilot CLI Dynamic Workflow at
+`.github/extensions/web-dev-harness/extension.mjs`. It uses durable workflow
+steps to create an Open-WC implementation specification and then implement it
+from caller-supplied work-item, design, and API context:
+
+```sh
+copilot --experimental workflow run web-dev-harness \
+  --args '{"task":"Build a customer feedback form","workItem":"...","design":"...","apiContract":"..."}'
+```
+
+Run it in the target component workspace with the Copilot tools needed to read
+and edit files enabled. This workflow handles specification and implementation;
+the TypeScript harness remains the entry point for external integrations,
+verification gates, resumable publishing, and the dashboard.

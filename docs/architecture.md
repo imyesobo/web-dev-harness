@@ -131,6 +131,16 @@ capabilities. The permission handler in [src/copilot.ts](../src/copilot.ts)
 rejects anything that is not a read/write inside the workspace (no MCP, no
 shell, no URLs, no sandbox bypass).
 
+## Copilot CLI Dynamic Workflow
+
+The project-level extension at
+[.github/extensions/web-dev-harness/extension.mjs](../.github/extensions/web-dev-harness/extension.mjs)
+offers a separate Copilot CLI entry point for the specification and
+implementation stages. It receives task context as workflow arguments and uses
+`ctx.step` to checkpoint each agent result for resume. It does not replace the
+TypeScript harness: external-data ingestion, quality gates, publishing, and
+dashboard sessions remain owned by the existing programmatic layer.
+
 ## Other loops in the system
 
 - **Verification repair loop** — the only cross-layer loop; bounded at 3
